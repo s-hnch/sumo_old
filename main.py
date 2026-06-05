@@ -1,139 +1,72 @@
 """
 Sumo: scikit-learn regression pipeline for tabular data
-Surrogate modeling pipeline
+Surrogate modeling pipeline - Main entry point
+
+Usage:
+    python main.py [data_file.csv]
 """
 
-from sklearn.pipeline import Pipeline
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
-import pandas as pd
-import joblib
-import os
-
-# Configuration
-DATA_PATH = "data/raw/input.csv"
-MODEL_SAVE_PATH = "models/regressor.joblib"
-TEST_SIZE = 0.2
-RANDOM_STATE = 42
+import sys
+from src.data import load_data, split_data
+from src.model import build_pipeline, train_pipeline
+from src.evaluation import evaluate_model, get_residuals, print_residual_stats
+from src.utils import save_model, save_results, get_feature_importance
 
 
-def load_data(filepath=DATA_PATH):
-    """Load tabular data from CSV file."""
-    df = pd.read_csv(filepath)
-    print(f"Loaded {len(df)} rows with {len(df.columns)} columns")
-    print(f"Columns: {list(df.columns)}")
-    return df
-
-
-def prepare_data(df, target_column):
+def run_pipeline(data_path=None):
     """
-    Prepare data for regression.
+    Run the complete modeling pipeline.
     
     Args:
-        df: DataFrame with features and target
-        target_column: Name of the column to predict
-    
-    Returns:
-        X_train, X_test, y_train, y_test
+        data_path: Optional path to CSV file
     """
-    # Separate features and target
-    X = df.drop(columns=[target_column])
-    y = df[target_column]
+    print("=" * 50)
+    print("  Sumo: Regression Pipeline for Surrogate Modeling")
+    print("=" * 50)
     
-    # Select only numeric columns
-    numeric_cols = X.select_dtypes(include=["float64", "int64"]).columns
-    X = X[numeric_cols]
-    
-    print(f"Using {len(numeric_cols)} numeric features: {list(numeric_cols)}")
-    print(f"Target variable: {target_column}")
-    
-    # Split into train and test
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
-    )
-    
-    print(f"Train: {X_train.shape}, Test: {X_test.shape}")
-    return X_train, X_test, y_train, y_test
-
-
-def build_pipeline():
-    """Build the scikit-learn pipeline."""
-    pipeline = Pipeline([
-        ("scaler", StandardScaler()),
-        ("model", RandomForestRegressor(
-            n_estimators=100,
-            random_state=RANDOM_STATE
-        ))
-    ])
-    return pipeline
-
-
-def evaluate_model(pipeline, X_test, y_test):
-    """Evaluate the trained pipeline."""
-    predictions = pipeline.predict(X_test)
-    
-    mse = mean_squared_error(y_test, predictions)
-    mae = mean_absolute_error(y_test, predictions)
-    r2 = r2_score(y_test, predictions)
-    
-    print("\n=== Model Evaluation ===")
-    print(f"Mean Squared Error (MSE): {mse:.4f}")
-    print(f"Mean Absolute Error (MAE): {mae:.4f}")
-    print(f"R-squared (R²): {r2:.4f}")
-    
-    return {"mse": mse, "mae": mae, "r2": r2}
-
-
-def save_model(pipeline, filepath=MODEL_SAVE_PATH):
-    """Save the trained pipeline."""
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    joblib.dump(pipeline, filepath)
-    print(f"\nModel saved to {filepath}")
-
-
-def main():
-    """Run the complete pipeline."""
-    print("=== Sumo: Regression Pipeline ===\n")
-    
-    # Check if data exists
-    if not os.path.exists(DATA_PATH):
-        print(f"ERROR: Data file not found at {DATA_PATH}")
-        print("Please add your tabular data CSV file to data/raw/input.csv")
-        print("\nExample format:")
-        print("feature1,feature2,feature3,target")
-        print("1.5,2.3,0.8,10.2")
-        print("2.1,3.7,1.2,15.6")
-        return
-    
-    # Step 1: Load data
-    df = load_data()
-    
-    # Get target column (assume last column is target)
-    target_column = df.columns[-1]
-    
-    # Step 2: Prepare data
-    X_train, X_test, y_train, y_test = prepare_data(df, target_column)
-    
-    # Step 3: Build pipeline
-    pipeline = build_pipeline()
-    print("\nPipeline steps:")
-    for name, step in pipeline.steps:
-        print(f"  - {name}: {step.__class__.__name__}")
-    
-    # Step 4: Train
-    print("\nTraining model...")
-    pipeline.fit(X_train, y_train)
-    
-    # Step 5: Evaluate
-    metrics = evaluate_model(pipeline, X_test, y_test)
-    
-    # Step 6: Save
-    save_model(pipeline)
-    
-    print("\n=== Pipeline Complete ===")
+    try:
+        # Step 1-2: Data loading, validation, and splitting
+        print("\n[1-2] Loading and preparing data...")
+        df = load_data(data_path)
+        X_train, X_test, y_train, y_test, feature_names = split_data(df)
+        
+        # Step 3-6: Build and train pipeline
+        print("\n[3-6] Building and training pipeline...")
+        pipeline = build_pipeline(model_type="random_forest", preprocess=True)
+        trained_pipeline = train_pipeline(pipeline, X_train, y_train)
+        
+        # Step 7-10: Evaluation
+        print("\n[7-10] Evaluating model...")
+        metrics = evaluate_model(trained_pipeline, X_test, y_test)
+        
+        # Step 9: Residual diagnostics
+        residuals = get_residuals(trained_pipeline, X_test, y_test)
+        print_residual_stats(residuals)
+        
+        # Step 11: Feature importance
+        feat_imp = get_feature_importance(trained_pipeline)
+        if feat_imp:
+            print("\n  Feature Importance:")
+            for i, imp in enumerate(feat_imp["importances"]):
+                print(f"    {feature_names[i]}: {imp:.4f}")
+        
+        # Step 12: Save results
+        print("\n[12] Saving results...")
+        save_model(trained_pipeline)
+        save_results(metrics)
+        
+        print("\n" + "=" * 50)
+        print("  Pipeline completed successfully!")
+        print("=" * 50)
+        
+        return metrics
+        
+    except Exception as e:
+        print(f"\nERROR: {type(e).__name__}: {e}")
+        return None
 
 
 if __name__ == "__main__":
-    main()
+    # Get data path from command line if provided
+    data_path = sys.argv[1] if len(sys.argv) > 1 else None
+    run_pipeline(data_path)

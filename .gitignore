@@ -1,5 +1,6 @@
 # Generated files
 models/
+results/
 data/raw/
 __pycache__/
 *.py[cod]
